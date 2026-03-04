@@ -2,7 +2,7 @@
 reMarkable USB Web Interface Client
 
 Direct access to reMarkable tablet via USB Web Interface (HTTP API).
-No SSH or developer mode required - just enable "USB web interface" in Settings.
+Just enable "USB web interface" in Settings → Storage.
 
 Default connection: http://10.11.99.1 (USB connection)
 
@@ -15,7 +15,7 @@ The USB web interface provides:
 - /thumbnail/{guid} - Get document thumbnail
 
 Benefits:
-- No developer mode required (no factory reset)
+- No subscription required
 - No reMarkable Connect subscription required
 - Works over USB connection only (offline)
 - Officially supported by reMarkable

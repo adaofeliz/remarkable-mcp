@@ -1,12 +1,12 @@
 # USB Web Interface Setup Guide
 
-The USB web interface is the **easiest way** to connect remarkable-mcp to your tablet. It requires no developer mode, no subscription, and works entirely offline.
+The USB web interface is the **easiest way** to connect remarkable-mcp to your tablet. It works entirely offline over USB.
 
 ## Overview
 
 The USB web interface is an official reMarkable feature that provides HTTP API access when your tablet is connected via USB. This gives you:
 
-- ✅ **No developer mode required** — Keep your warranty and avoid factory reset
+- ✅ **No subscription needed** — Works without reMarkable Connect
 - ✅ **No subscription needed** — Works without reMarkable Connect
 - ✅ **Fast offline access** — Direct USB connection
 - ✅ **Officially supported** — Part of the standard reMarkable OS
@@ -42,7 +42,7 @@ Add to your `.vscode/mcp.json`:
   "servers": {
     "remarkable": {
       "command": "uvx",
-      "args": ["remarkable-mcp", "--usb-web"],
+      "args": ["remarkable-mcp", "--usb"],
       "env": {
         "GOOGLE_VISION_API_KEY": "your-api-key-if-needed"
       }
@@ -53,7 +53,7 @@ Add to your `.vscode/mcp.json`:
 
 Or run directly:
 ```bash
-uvx remarkable-mcp --usb-web
+uvx remarkable-mcp --usb
 ```
 
 ## Troubleshooting
@@ -139,9 +139,9 @@ export REMARKABLE_USB_TIMEOUT="30"
 | Feature | USB Web | SSH | Cloud |
 |---------|---------|-----|-------|
 | **Setup** | ✅ Easy | ⚠️ Complex | ✅ Easy |
-| **Developer Mode** | ✅ Not required | ❌ Required | ✅ Not required |
+| **Developer Mode** | ✅ Not needed | ❌ Required | ✅ Not needed |
 | **Factory Reset** | ✅ No | ❌ Yes | ✅ No |
-| **Subscription** | ✅ Not required | ✅ Not required | ❌ Required |
+| **Subscription** | ✅ Not needed | ✅ Not needed | ❌ Required |
 | **Speed** | ✅ Fast | ✅✅ Very Fast | ⚠️ Slow |
 | **Offline** | ✅ Yes | ✅ Yes | ❌ No |
 | **Connection** | USB only | USB only | Internet |
@@ -149,7 +149,7 @@ export REMARKABLE_USB_TIMEOUT="30"
 
 **Recommendation:**
 - **Most users:** USB Web Interface — Best balance of ease and performance
-- **Advanced users:** SSH — Fastest, but requires developer mode
+- **Advanced users:** SSH — Fastest, but requires developer mode enabled
 - **Remote access:** Cloud API — Works anywhere, but slower and needs subscription
 
 ## Technical Details

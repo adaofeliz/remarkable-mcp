@@ -35,8 +35,8 @@ Examples:
   # Run with token from environment
   REMARKABLE_TOKEN="your-token" uvx remarkable-mcp
 
-  # Run with USB web interface (no dev mode or subscription!)
-  uvx remarkable-mcp --usb-web
+  # Run with USB web interface
+  uvx remarkable-mcp --usb
 
   # Run with SSH transport (direct USB connection, requires dev mode)
   uvx remarkable-mcp --ssh
@@ -70,9 +70,9 @@ Security Note:
         help="Use SSH transport instead of cloud API (requires developer mode)",
     )
     parser.add_argument(
-        "--usb-web",
+        "--usb",
         action="store_true",
-        help="Use USB web interface (no developer mode or subscription required)",
+        help="Use USB web interface (connect via USB cable, enable in Storage Settings)",
     )
 
     args = parser.parse_args()
@@ -108,7 +108,7 @@ Security Note:
         except Exception as e:
             print(f"❌ Registration failed: {e}", file=sys.stderr)
             sys.exit(1)
-    elif args.usb_web:
+    elif args.usb:
         # USB web mode - set environment variable and run server
         os.environ["REMARKABLE_USE_USB_WEB"] = "1"
         from remarkable_mcp.server import run
