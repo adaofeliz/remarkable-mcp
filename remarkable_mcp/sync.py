@@ -8,6 +8,8 @@ Based on the protocol used by ddvk/rmapi.
 """
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -85,6 +87,7 @@ class RemarkableClient:
     def __init__(self, device_token: str = "", user_token: str = ""):
         self.device_token = device_token
         self.user_token = user_token
+        self._token_lock = threading.Lock()
         self._documents: List[Document] = []
         self._documents_by_id: Dict[str, Document] = {}
 
@@ -119,7 +122,9 @@ class RemarkableClient:
 
         if response.status_code == 401:
             # Token expired, try to renew
-            self.renew_token()
+            with self._token_lock:
+                if self.user_token == headers["Authorization"].split(" ")[1]:
+                    self.renew_token()
             headers = {"Authorization": f"Bearer {self.user_token}"}
             response = requests.request(method, url, headers=headers, timeout=60)
 
@@ -151,6 +156,53 @@ class RemarkableClient:
                 )
 
         return entries
+
+    def _fetch_one_document(self, entry: Dict[str, Any]) -> Optional[Document]:
+        try:
+            doc_id = entry["id"]
+            doc_hash = entry["hash"]
+
+            blob_content = self._get_file(doc_hash)
+            blob_entries = self._parse_index(blob_content)
+
+            metadata = {}
+            files = []
+
+            for blob_entry in blob_entries:
+                files.append(blob_entry)
+                if blob_entry["id"].endswith(".metadata"):
+                    try:
+                        meta_content = self._get_file(blob_entry["hash"])
+                        metadata = json.loads(meta_content.decode("utf-8"))
+                    except Exception:
+                        pass
+
+            if metadata.get("deleted", False):
+                return None
+
+            last_modified = None
+            if "lastModified" in metadata:
+                try:
+                    ts = int(metadata["lastModified"]) / 1000
+                    last_modified = datetime.fromtimestamp(ts)
+                except (ValueError, TypeError):
+                    pass
+
+            return Document(
+                id=doc_id,
+                hash=doc_hash,
+                name=metadata.get("visibleName", doc_id),
+                doc_type=metadata.get("type", "DocumentType"),
+                parent=metadata.get("parent", ""),
+                deleted=metadata.get("deleted", False),
+                pinned=metadata.get("pinned", False),
+                last_modified=last_modified,
+                size=entry["size"],
+                files=files,
+                tags=metadata.get("tags", []),
+            )
+        except Exception:
+            return None
 
     def get_meta_items(self, limit: Optional[int] = None) -> List[Document]:
         """
@@ -190,64 +242,12 @@ class RemarkableClient:
         root_index = self._get_file(root_hash)
         entries = self._parse_index(root_index)
 
-        documents = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            fetched_documents = executor.map(self._fetch_one_document, entries)
+            documents = [doc for doc in fetched_documents if doc is not None]
 
-        for entry in entries:
-            doc_id = entry["id"]
-            doc_hash = entry["hash"]
-
-            # Fetch the document's blob index
-            try:
-                blob_content = self._get_file(doc_hash)
-                blob_entries = self._parse_index(blob_content)
-            except Exception:
-                continue
-
-            # Find and fetch the metadata file
-            metadata = {}
-            files = []
-
-            for blob_entry in blob_entries:
-                files.append(blob_entry)
-                if blob_entry["id"].endswith(".metadata"):
-                    try:
-                        meta_content = self._get_file(blob_entry["hash"])
-                        metadata = json.loads(meta_content.decode("utf-8"))
-                    except Exception:
-                        pass
-
-            # Skip deleted documents
-            if metadata.get("deleted", False):
-                continue
-
-            # Parse last modified timestamp
-            last_modified = None
-            if "lastModified" in metadata:
-                try:
-                    ts = int(metadata["lastModified"]) / 1000  # Convert ms to seconds
-                    last_modified = datetime.fromtimestamp(ts)
-                except (ValueError, TypeError):
-                    pass
-
-            doc = Document(
-                id=doc_id,
-                hash=doc_hash,
-                name=metadata.get("visibleName", doc_id),
-                doc_type=metadata.get("type", "DocumentType"),
-                parent=metadata.get("parent", ""),
-                deleted=metadata.get("deleted", False),
-                pinned=metadata.get("pinned", False),
-                last_modified=last_modified,
-                size=entry["size"],
-                files=files,
-                tags=metadata.get("tags", []),
-            )
-
-            documents.append(doc)
-
-            # Stop early if we have enough
-            if limit is not None and len(documents) >= limit:
-                break
+        if limit is not None:
+            documents = documents[:limit]
 
         self._documents = documents
         self._documents_by_id = {d.id: d for d in documents}
