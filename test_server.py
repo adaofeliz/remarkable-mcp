@@ -1503,3 +1503,206 @@ class TestUSBWebInterface:
                 import remarkable_mcp.api
 
                 importlib.reload(remarkable_mcp.api)
+
+
+# =============================================================================
+# Test DocumentCache
+# =============================================================================
+
+
+class TestDocumentCache:
+    """Tests for the DocumentCache class covering lifecycle, TTL, concurrency, and edge cases."""
+
+    def _make_doc(self, doc_id="doc-1", name="Doc 1", parent="", doc_type="DocumentType"):
+        """Helper to create a Document instance for testing."""
+        from remarkable_mcp.sync import Document
+
+        return Document(
+            id=doc_id,
+            hash="abc123",
+            name=name,
+            doc_type=doc_type,
+            parent=parent,
+        )
+
+    def test_cache_empty_on_init(self):
+        """A fresh DocumentCache has no snapshot."""
+        from remarkable_mcp.cache import DocumentCache
+
+        cache = DocumentCache()
+        assert cache._snapshot is None
+
+    def test_cache_refresh_populates_snapshot(self):
+        """refresh() populates the snapshot from the client."""
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        doc2 = self._make_doc("doc-2", "Doc 2")
+
+        mock_client = Mock()
+        mock_client.get_meta_items.return_value = [doc1, doc2]
+
+        cache = DocumentCache()
+        snapshot = cache.refresh(mock_client)
+
+        assert snapshot is not None
+        assert len(snapshot.documents) == 2
+        assert "doc-1" in snapshot.items_by_id
+        assert "doc-2" in snapshot.items_by_id
+        assert snapshot.items_by_parent[""] == [doc1, doc2]
+
+    def test_cache_get_snapshot_returns_cached(self):
+        """get_snapshot() returns cached data without re-fetching when not stale."""
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        mock_client = Mock()
+        mock_client.get_meta_items.return_value = [doc1]
+
+        cache = DocumentCache(ttl_seconds=300)
+        first = cache.get_snapshot(mock_client)
+        second = cache.get_snapshot(mock_client)
+
+        assert first is second
+        mock_client.get_meta_items.assert_called_once()
+
+    def test_cache_ttl_expiry(self):
+        """Cache becomes stale after TTL expires."""
+        from remarkable_mcp.cache import DocumentCache
+
+        cache = DocumentCache(ttl_seconds=1)
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        cache.set_snapshot([doc1])
+
+        assert cache.is_stale() is False
+
+        # Simulate time passing beyond TTL
+        with patch("remarkable_mcp.cache.time") as mock_time:
+            # _build_snapshot already called real time.time(), so the snapshot
+            # has a real timestamp. We make time.time() return far in the future.
+            mock_time.time.return_value = cache._snapshot.timestamp + 2
+            assert cache.is_stale() is True
+
+    def test_cache_stale_on_failure(self):
+        """When refresh fails, get_snapshot returns stale data if available."""
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        cache = DocumentCache(ttl_seconds=0)  # always stale
+        cache.set_snapshot([doc1])
+
+        failing_client = Mock()
+        failing_client.get_meta_items.side_effect = RuntimeError("API down")
+
+        # refresh itself should raise
+        with pytest.raises(RuntimeError, match="API down"):
+            cache.refresh(failing_client)
+
+        # get_snapshot should fall back to stale snapshot
+        # With ttl_seconds=0, it's always stale, so get_snapshot will try refresh
+        # and fall back to stale data
+        snapshot = cache.get_snapshot(failing_client)
+        assert len(snapshot.documents) == 1
+        assert snapshot.items_by_id["doc-1"] == doc1
+
+    def test_cache_hard_fail_when_empty(self):
+        """When no stale data exists and refresh fails, get_snapshot raises."""
+        from remarkable_mcp.cache import DocumentCache
+
+        cache = DocumentCache()
+        failing_client = Mock()
+        failing_client.get_meta_items.side_effect = RuntimeError("API down")
+
+        with pytest.raises(RuntimeError, match="API down"):
+            cache.get_snapshot(failing_client)
+
+    def test_cache_single_writer_lock(self):
+        """Only one thread refreshes the cache even when many call get_snapshot simultaneously."""
+        import threading
+        import time as time_module
+
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        call_count = 0
+        lock = threading.Lock()
+
+        def slow_get_meta_items():
+            nonlocal call_count
+            with lock:
+                call_count += 1
+            time_module.sleep(0.05)
+            return [doc1]
+
+        mock_client = Mock()
+        mock_client.get_meta_items.side_effect = slow_get_meta_items
+
+        cache = DocumentCache(ttl_seconds=300)
+        barrier = threading.Barrier(10)
+        results = [None] * 10
+
+        def worker(idx):
+            barrier.wait()
+            results[idx] = cache.get_snapshot(mock_client)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        # Only one thread should have called get_meta_items
+        assert call_count == 1
+        # All threads should have received a valid snapshot
+        for r in results:
+            assert r is not None
+            assert len(r.documents) == 1
+
+    def test_cache_set_snapshot_external(self):
+        """set_snapshot() populates the cache from an external document list."""
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        doc2 = self._make_doc("doc-2", "Doc 2")
+
+        cache = DocumentCache()
+        snapshot = cache.set_snapshot([doc1, doc2])
+
+        assert snapshot is not None
+        assert len(snapshot.documents) == 2
+        assert "doc-1" in snapshot.items_by_id
+        assert "doc-2" in snapshot.items_by_id
+
+    def test_cache_invalidate_forces_refresh(self):
+        """invalidate() clears the snapshot, forcing a refresh on next access."""
+        from remarkable_mcp.cache import DocumentCache
+
+        doc1 = self._make_doc("doc-1", "Doc 1")
+        cache = DocumentCache()
+        cache.set_snapshot([doc1])
+
+        assert cache._snapshot is not None
+        assert cache.is_stale() is False
+
+        cache.invalidate()
+
+        assert cache._snapshot is None
+        assert cache.is_stale() is True
+
+    def test_snapshot_contains_lookup_dicts(self):
+        """Snapshot lookup dicts correctly index documents by ID and parent."""
+        from remarkable_mcp.cache import DocumentCache
+
+        folder = self._make_doc("folder-1", "My Folder", parent="", doc_type="CollectionType")
+        child_doc = self._make_doc("doc-in-folder", "Child Doc", parent="folder-1")
+
+        cache = DocumentCache()
+        snapshot = cache.set_snapshot([folder, child_doc])
+
+        # items_by_id lookups
+        assert snapshot.items_by_id["folder-1"] == folder
+        assert snapshot.items_by_id["doc-in-folder"] == child_doc
+
+        # items_by_parent lookups
+        assert child_doc in snapshot.items_by_parent["folder-1"]
+        assert folder in snapshot.items_by_parent[""]
