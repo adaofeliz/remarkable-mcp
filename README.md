@@ -183,7 +183,7 @@ Choose the connection method that works best for you:
 |------|-----------------|-------|--------------|----------|
 | **🔌 USB Web (Recommended)** | ✅ Easy | Fast | USB cable, enable in Storage Settings | Everyone |
 | **⚡ SSH** | ⚠️ Advanced | Very Fast | Developer mode, USB connection | Power users |
-| **☁️ Cloud** | ✅ Easy | Slow | reMarkable Connect subscription | Remote/wireless access |
+| **☁️ Cloud** | ✅ Easy | Moderate | reMarkable Connect subscription | Remote/wireless access |
 
 **📖 Detailed Setup Guides:**
 - [USB Web Interface Setup](docs/usb-web-setup.md) — **Recommended** — simple setup, full feature support
@@ -397,6 +397,18 @@ When `REMARKABLE_OCR_BACKEND=auto` (default):
 | Setup | Developer mode | One-time code |
 
 📖 **[SSH Setup Guide](docs/ssh-setup.md)**
+
+---
+
+## Cloud Mode Architecture
+
+In cloud mode, the server maintains a shared in-memory cache of document metadata. A background loader populates this cache at startup, and all tools read from it rather than making individual API calls. This keeps tool responses fast after the initial load.
+
+The reMarkable cloud sync protocol requires per-document HTTP requests to fetch metadata. To speed up initial loading, the server parallelizes these requests with a bounded thread pool (10 concurrent workers), making startup roughly 10x faster than sequential fetching.
+
+The cache uses a 5-minute TTL. After expiry, the next tool call triggers a refresh. If a refresh fails (e.g. transient network error), the server returns the last known good data instead of failing — so tools stay responsive even during brief connectivity issues.
+
+USB Web and SSH modes are unaffected by caching. They access files directly over the local connection and don't need it.
 
 ---
 
