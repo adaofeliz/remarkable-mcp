@@ -1706,3 +1706,106 @@ class TestDocumentCache:
         # items_by_parent lookups
         assert child_doc in snapshot.items_by_parent["folder-1"]
         assert folder in snapshot.items_by_parent[""]
+
+
+# =============================================================================
+# Live Cloud Integration Tests (opt-in, require .env credentials)
+# =============================================================================
+
+
+class TestLiveCloudIntegration:
+    """Live integration tests against real reMarkable Cloud API.
+
+    Run with: pytest -m remarkable_live --timeout=120
+    Requires .env file with REMARKABLE_TOKEN set.
+    Skipped by default in normal test runs.
+    """
+
+    @pytest.fixture(autouse=True)
+    def live_env(self):
+        import os
+        from pathlib import Path
+
+        env_path = Path(__file__).parent / ".env"
+        if not env_path.exists():
+            pytest.skip("No .env file found - skipping live tests")
+
+        env_vars = {}
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                env_vars[key.strip()] = value.strip()
+
+        if "REMARKABLE_TOKEN" not in env_vars:
+            pytest.skip("REMARKABLE_TOKEN not set in .env - skipping live tests")
+
+        original = {k: os.environ.get(k) for k in env_vars}
+        os.environ.update(env_vars)
+
+        from remarkable_mcp.cache import document_cache
+
+        document_cache.invalidate()
+
+        yield
+
+        for k, v in original.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        document_cache.invalidate()
+
+    @pytest.mark.remarkable_live
+    async def test_live_status(self):
+        result = await mcp.call_tool("remarkable_status", {})
+        data = json.loads(result[0][0].text)
+        assert "_error" not in data
+        assert data["authenticated"] is True
+        assert data["document_count"] > 0
+
+    @pytest.mark.remarkable_live
+    async def test_live_browse_root(self):
+        result = await mcp.call_tool("remarkable_browse", {"path": "/"})
+        data = json.loads(result[0][0].text)
+        assert "_error" not in data
+        assert data["mode"] == "browse"
+        assert len(data["folders"]) + len(data["documents"]) > 0
+
+    @pytest.mark.remarkable_live
+    async def test_live_recent(self):
+        result = await mcp.call_tool("remarkable_recent", {"limit": 5})
+        data = json.loads(result[0][0].text)
+        assert "_error" not in data
+        assert data["count"] > 0
+
+    @pytest.mark.remarkable_live
+    async def test_live_search(self):
+        result = await mcp.call_tool("remarkable_browse", {"query": "Quick"})
+        data = json.loads(result[0][0].text)
+        assert "_error" not in data
+        assert data["mode"] == "search"
+
+    @pytest.mark.remarkable_live
+    async def test_live_read(self):
+        browse_result = await mcp.call_tool("remarkable_browse", {"path": "/"})
+        browse_data = json.loads(browse_result[0][0].text)
+        if not browse_data.get("documents"):
+            pytest.skip("No documents in root folder")
+        doc_name = browse_data["documents"][0]["name"]
+        result = await mcp.call_tool("remarkable_read", {"document": doc_name})
+        data = json.loads(result[0][0].text)
+        assert "_error" not in data or data["_error"]["type"] != "read_failed"
+
+    @pytest.mark.remarkable_live
+    async def test_live_image(self):
+        browse_result = await mcp.call_tool("remarkable_browse", {"path": "/"})
+        browse_data = json.loads(browse_result[0][0].text)
+        if not browse_data.get("documents"):
+            pytest.skip("No documents in root folder")
+        doc_name = browse_data["documents"][0]["name"]
+        result = await mcp.call_tool(
+            "remarkable_image", {"document": doc_name, "compatibility": True}
+        )
+        data = json.loads(result[0].text)
+        assert "_error" not in data or data["_error"]["type"] != "image_failed"
