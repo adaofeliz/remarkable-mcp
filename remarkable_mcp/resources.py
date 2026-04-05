@@ -20,6 +20,7 @@ from typing import Optional, Set
 
 from mcp.types import Completion, ResourceTemplateReference
 
+from remarkable_mcp.cache import document_cache
 from remarkable_mcp.server import mcp
 
 logger = logging.getLogger(__name__)
@@ -459,6 +460,8 @@ def load_all_documents_sync() -> int:
         except Exception as e:
             logger.debug(f"Failed to register '{doc.VissibleName}': {e}")
 
+    document_cache.set_snapshot(items)
+
     logger.info(
         f"Registered {len(_registered_docs)} text resources"
         + (f", {len(_registered_raw)} raw resources (PDF/EPUB)" if _registered_raw else "")
@@ -528,6 +531,7 @@ async def _load_documents_background(shutdown_event: asyncio.Event):
                     f"Background loader complete: {len(_registered_docs)} documents registered"
                     + (f" (filtered to {root})" if root != "/" else "")
                 )
+                document_cache.set_snapshot(items)
                 break
 
             # Register this batch (no file_types in cloud mode - raw resources not available)
