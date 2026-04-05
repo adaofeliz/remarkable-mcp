@@ -10,7 +10,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional, cast
 
 from mcp.server.fastmcp import Context
 from mcp.types import (
@@ -26,8 +26,6 @@ from remarkable_mcp.api import (
     download_raw_file,
     get_file_type,
     get_item_path,
-    get_items_by_id,
-    get_items_by_parent,
     get_rmapi,
 )
 from remarkable_mcp.extract import (
@@ -109,6 +107,20 @@ def _resolve_root_path(path: str) -> str:
         return root
     # Prepend root to the path
     return root + path
+
+
+def _get_collection():
+    """Get document collection from shared cache, refreshing if needed.
+
+    Returns (documents, items_by_id, items_by_parent) tuple.
+    Uses the shared document_cache to avoid repeated expensive API calls.
+    On cache miss or TTL expiry, calls client.get_meta_items() to refresh.
+    """
+    from remarkable_mcp.cache import document_cache
+
+    client = get_rmapi()
+    snapshot = document_cache.get_snapshot(client)
+    return snapshot.documents, snapshot.items_by_id, snapshot.items_by_parent
 
 
 # Base annotations for read-only operations
@@ -295,9 +307,8 @@ async def remarkable_read(
     </examples>
     """
     try:
-        client = get_rmapi()
-        collection = client.get_meta_items()
-        items_by_id = get_items_by_id(collection)
+        collection, items_by_id, _ = _get_collection()
+        client = get_rmapi()  # still needed for client.download()
 
         # Validate parameters
         page = max(1, page)
@@ -782,10 +793,7 @@ def remarkable_browse(
     </examples>
     """
     try:
-        client = get_rmapi()
-        collection = client.get_meta_items()
-        items_by_id = get_items_by_id(collection)
-        items_by_parent = get_items_by_parent(collection)
+        collection, items_by_id, items_by_parent = _get_collection()
 
         root = _get_root_path()
         # Resolve user path to actual device path
@@ -1010,9 +1018,8 @@ def remarkable_recent(limit: int = 10, include_preview: bool = False) -> str:
     </examples>
     """
     try:
-        client = get_rmapi()
-        collection = client.get_meta_items()
-        items_by_id = get_items_by_id(collection)
+        collection, items_by_id, _ = _get_collection()
+        client = get_rmapi()  # still needed for client.download() in include_preview path
 
         # Clamp limit - lower max when previews enabled (expensive operation)
         max_limit = 10 if include_preview else 50
@@ -1272,9 +1279,7 @@ def remarkable_status() -> str:
         connection_info = "environment variable" if REMARKABLE_TOKEN else "file (~/.rmapi)"
 
     try:
-        client = get_rmapi()
-        collection = client.get_meta_items()
-        items_by_id = get_items_by_id(collection)
+        collection, items_by_id, _ = _get_collection()
 
         root = _get_root_path()
 
@@ -1406,9 +1411,8 @@ async def remarkable_image(
         if background is None:
             background = get_background_color()
 
-        client = get_rmapi()
-        collection = client.get_meta_items()
-        items_by_id = get_items_by_id(collection)
+        collection, items_by_id, _ = _get_collection()
+        client = get_rmapi()  # still needed for client.download()
 
         root = _get_root_path()
         # Resolve user-provided path to actual device path
