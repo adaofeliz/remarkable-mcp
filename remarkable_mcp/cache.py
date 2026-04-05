@@ -8,7 +8,6 @@ from typing import Protocol
 
 from remarkable_mcp.sync import Document
 
-
 CACHE_TTL_SECONDS = 300
 logger = logging.getLogger(__name__)
 

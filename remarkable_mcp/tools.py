@@ -10,7 +10,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, List, Literal, Optional, cast
+from typing import List, Literal, Optional
 
 from mcp.server.fastmcp import Context
 from mcp.types import (
